@@ -1,17 +1,15 @@
 #include <eosio/eosio.hpp>
+#include <eosio/asset.hpp>
 
 using namespace eosio;
 
-CONTRACT questscreate : public contract {
+CONTRACT enigmatest13 : public contract {
 public:
     using contract::contract;
 
     // Define the structure for the table rows
     TABLE Quest {
         uint64_t id;
-        std::vector<std::string> nfts;
-        std::vector<std::string> tokens;
-        uint64_t wls;
         std::vector<uint64_t> tasks;
         time_point_sec end;
         std::string questname;
@@ -25,7 +23,7 @@ public:
 
     // Define a Multi-Index table with the structure defined above
     using quests_table = multi_index<"quests"_n, Quest>;
-    // tasks is like {taskId: true, taskId: false, quiz: true}
+    
     TABLE User {
         uint64_t scoreId;
         uint64_t questId;
@@ -41,6 +39,8 @@ public:
     TABLE Community {
         uint64_t communityId;
         std::string communityName;
+        std::vector<uint64_t> nfts;
+        asset tokens;
         uint64_t score;
         std::string avatar;
         name account;
@@ -216,7 +216,7 @@ public:
 
     
 
-    ACTION createcommun(const uint64_t& communityId, const std::string& communityName, const std::string& avatar, const name& account, const std::vector<uint64_t>& questIds, const std::vector<std::string>& banners)
+    ACTION createcommun(const uint64_t& communityId, const std::string& communityName, const std::string& avatar, const name& account, const std::vector<std::string>& banners)
                     {
                         require_auth(account);
                         communities_table communities(_self, account.value);
@@ -227,12 +227,11 @@ public:
                             row.avatar = avatar;
                             row.account = account;
                             row.followers = 0;
-                            row.questIds = questIds;
                             row.banners = banners;
                         });
                     }
 
-    ACTION editcommun(const uint64_t& communityId, const std::string& communityName, const std::string& avatar, const name& account, const std::vector<uint64_t>& questIds, const std::vector<std::string>& banners)
+    ACTION editcommun(const uint64_t& communityId, const std::string& communityName, const std::string& avatar, const name& account, const std::vector<std::string>& banners)
                     {
                         require_auth(account);
                         communities_table communities(get_self(), account.value);
@@ -244,7 +243,6 @@ public:
                             row.communityId = communityId;
                             row.communityName = communityName;
                             row.avatar = avatar;
-                            row.questIds = questIds;
                             row.banners = banners;
                         });
                     }
@@ -268,10 +266,8 @@ public:
     }
 
     // Action to insert a row into the table
-    ACTION createquest(const uint64_t& id, const std::vector<std::string>& nfts, const std::vector<std::string>& tokens,
-                   const uint64_t& wls, const time_point_sec& end, const std::string& questname, const uint64_t& communityId, const name& account, const std::string& avatar) 
+    ACTION createquest(const uint64_t& id, const time_point_sec& end, const std::string& questname, const uint64_t& communityId, const name& account, const std::string& avatar) 
                    {
-        //check if account entered are logined
         require_auth(account);
         communities_table communities(get_self(), account.value);
         quests_table quests(get_self(), account.value);
@@ -283,9 +279,6 @@ public:
         }
         quests.emplace(account, [&](auto& row) {
             row.id = id;
-            row.nfts = nfts;
-            row.tokens = tokens;
-            row.wls = wls;
             row.end = end;
             row.account = account;
             row.communityId = communityId;
@@ -294,10 +287,8 @@ public:
         });
     }
 
-    ACTION  editquest(const uint64_t& id, const std::vector<std::string>& nfts, const std::vector<std::string>& tokens,
-                   const uint64_t& wls, const time_point_sec& end, const uint64_t communityId, const name account, const std::string& questname, const std::string& avatar) 
+    ACTION  editquest(const uint64_t& id, const time_point_sec& end, const uint64_t communityId, const name account, const std::string& questname, const std::string& avatar) 
                    {
-        //check if account entered are logined
         require_auth(account);
         communities_table communities(get_self(), account.value);
         quests_table quests(get_self(), account.value);
@@ -310,16 +301,48 @@ public:
             check(commiterator != communities.end(), "Community not found");
         }
         quests.modify(iterator, account, [&](auto& row) {
-            row.nfts = nfts;
             row.communityId = communityId;
-            row.tokens = tokens;
-            row.wls = wls;
             row.end = end;
             row.questname = questname;
             row.avatar = avatar;
         });
     }
-};
 
-// Macro to enable EOSIO contract ABI generation
-EOSIO_DISPATCH(questscreate, (createtask)(createcommun)(createquest)(editquest)(edittask)(deletetask)(subscribe)(editcommun)(submittask)(questaddtask)(questremtask))
+    [[eosio::on_notify("atomicassets::transfer")]]
+    void nft_transfer(name from, name to, std::vector<uint64_t>& asset_ids, std::string memo)
+        {
+            check(memo.length() == 16, "In memo you need to specify communityId to which you want to allocate tokens. It must be 16 digits long");
+            for (char c : memo) {
+                check(std::isdigit(c), "Invalid character in a string, only digits allowed");
+            }
+            uint64_t communityId = std::stoull(memo);
+            communities_table communities(get_self(), from.value);
+            auto commun = communities.find(communityId);
+            name commauthor = commun->account;
+            check(commun != communities.end(), "Community with such id not exists");
+            check(commauthor == from, "You need to be a community owner in order to add nfts to its storage");
+            auto existarray = commun->nfts;
+            existarray.reserve(existarray.size() + asset_ids.size());
+            existarray.insert(existarray.end(), asset_ids.begin(), asset_ids.end());
+            communities.modify(commun, _self, [&](auto& row) {
+                row.nfts = existarray;
+            });
+        }
+
+    [[eosio::on_notify("eosio.token::transfer")]]
+    void on_transfer(name from, name to, asset quantity, std::string memo){
+            check(memo.length() == 16, "In memo you need to specify communityId to which you want to allocate tokens. It must be 16 digits long");
+            for (char c : memo) {
+                check(std::isdigit(c), "Invalid character in a string, only digits allowed");
+            }
+            uint64_t communityId = std::stoull(memo);
+            communities_table communities(get_self(), from.value);
+            auto commun = communities.find(communityId);
+            name commauthor = commun->account;
+            check(commun != communities.end(), "Community with such id not exists");
+            check(commauthor == from, "You need to be a community owner in order to add tokens to its storage");
+            communities.modify(commun, from, [&](auto& row) {
+                row.tokens = quantity;
+            });
+        } 	
+};
